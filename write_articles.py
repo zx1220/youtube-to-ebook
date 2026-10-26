@@ -1,23 +1,84 @@
 """
-Part 3: Transform Transcripts into Magazine Articles using Claude AI
+Part 3: Transform Transcripts into Magazine Articles using AI
 Takes raw video transcripts and turns them into polished, readable articles.
+
+Supports switchable model providers (OpenAI-compatible protocol):
+- DeepSeek (default)  -> https://api.deepseek.com
+- GLM (Z.ai Coding Plan) -> https://api.z.ai/api/coding/paas/v4
+If the primary provider fails (e.g. quota exhausted), it automatically
+falls back to the other provider when that one has a key configured.
 """
 
 import os
-import anthropic
+import requests
 from dotenv import load_dotenv
 
-# Load your API key
+# Load your API keys
 load_dotenv()
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-# Create the Claude client
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+# ========================================
+# MODEL PROVIDER CONFIGURATION
+# Switch by setting ARTICLE_PROVIDER in .env (deepseek / glm)
+# ========================================
+ARTICLE_PROVIDER = os.getenv("ARTICLE_PROVIDER", "deepseek").strip().lower()
+
+PROVIDERS = {
+    "deepseek": {
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "api_key": os.getenv("DEEPSEEK_API_KEY", ""),
+        "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        "label": "DeepSeek",
+    },
+    "glm": {
+        "base_url": os.getenv("GLM_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
+        "api_key": os.getenv("GLM_API_KEY", ""),
+        "model": os.getenv("GLM_MODEL", "glm-4.5-air"),
+        "label": "GLM",
+    },
+}
+
+MAX_OUTPUT_TOKENS = int(os.getenv("ARTICLE_MAX_TOKENS", "8000"))
+
+
+def _is_configured(provider):
+    """A provider is usable when a real API key is set (not a placeholder)."""
+    key = provider["api_key"]
+    return bool(key) and "your_" not in key and "here" not in key
+
+
+def _chat(prompt, provider_name):
+    """
+    Call an OpenAI-compatible chat completions endpoint.
+    Returns the reply text, or raises an exception with the failure reason.
+    """
+    p = PROVIDERS[provider_name]
+    response = requests.post(
+        f"{p['base_url'].rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {p['api_key']}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": p["model"],
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=600,
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+    content = response.json()["choices"][0]["message"]["content"]
+    if not content or not content.strip():
+        raise RuntimeError("empty response")
+    return content.strip()
 
 
 def write_article(video):
     """
-    Use Claude to transform a video transcript into a magazine-style article.
+    Use an LLM to transform a video transcript into a magazine-style article.
+    Tries the primary provider first, then falls back to the other one.
     """
     prompt = f"""You are a skilled magazine writer. Transform this YouTube video transcript into a well-written, engaging article.
 
@@ -44,27 +105,34 @@ Remix this YouTube transcript into a magazine article. Guidelines:
 
 Format the article in clean markdown."""
 
-    try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=8000,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
+    # Primary provider first, then the other provider as fallback
+    order = [ARTICLE_PROVIDER] + [k for k in PROVIDERS if k != ARTICLE_PROVIDER]
 
-        return message.content[0].text
+    for name in order:
+        provider = PROVIDERS[name]
+        if not _is_configured(provider):
+            continue
 
-    except Exception as e:
-        print(f"  ⚠ Error generating article: {e}")
-        return None
+        try:
+            text = _chat(prompt, name)
+            used = f"{provider['label']} ({provider['model']})"
+            if name != ARTICLE_PROVIDER:
+                print(f"  ↩ Primary provider failed, article written by {used}")
+            else:
+                print(f"  ✓ Written by {used}")
+            return text
+        except Exception as e:
+            print(f"  ⚠ {provider['label']} ({provider['model']}) failed: {e}")
+
+    print("  ✗ All model providers failed")
+    return None
 
 
 def write_articles_for_videos(videos):
     """
     Generate articles for all videos with transcripts.
     """
-    print("\nGenerating articles with Claude AI...\n")
+    print("\nGenerating articles with AI...\n")
     print("=" * 60)
 
     articles = []
@@ -101,6 +169,7 @@ if __name__ == "__main__":
         "transcript": "Hello everyone, today we're going to talk about something really exciting. I've been working on this project for months and I can't wait to share it with you. The main idea is simple but powerful..."
     }
 
+    print(f"Active provider: {PROVIDERS[ARTICLE_PROVIDER]['label']} ({PROVIDERS[ARTICLE_PROVIDER]['model']})")
     print("Testing article generation...")
     article = write_article(test_video)
     if article:

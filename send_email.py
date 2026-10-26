@@ -19,6 +19,11 @@ load_dotenv()
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
+# Email delivery switch:
+#   SEND_EMAIL=false -> skip SMTP entirely, only save EPUB + HTML to newsletters/
+#   SEND_EMAIL=true  -> send via Gmail (requires the credentials above)
+SEND_EMAIL = os.getenv("SEND_EMAIL", "true").strip().lower() in ("true", "1", "yes", "on")
+
 
 def create_epub(articles):
     """
@@ -311,11 +316,24 @@ def save_newsletter_archive(html_content, epub_path, articles):
 def send_newsletter(articles, recipient_email=None):
     """
     Send the newsletter via Gmail with EPUB attachment.
+    If SEND_EMAIL=false, skips email delivery and only saves the
+    EPUB + HTML newsletter to the local archive (newsletters/).
     If no recipient specified, sends to yourself.
     """
     if not articles:
         print("No articles to send!")
         return False
+
+    # Local-only mode: build the ebook and archive it, skip SMTP entirely
+    if not SEND_EMAIL:
+        print("\n✉ Email delivery disabled (SEND_EMAIL=false) — saving locally only...")
+        print("  Creating EPUB ebook...")
+        epub_path = create_epub(articles)
+        html_content = create_newsletter_html(articles)
+        save_newsletter_archive(html_content, epub_path, articles)
+        os.remove(epub_path)
+        print("✓ Newsletter saved locally (email skipped) — see the newsletters/ folder")
+        return True
 
     # Default to sending to yourself
     if recipient_email is None:

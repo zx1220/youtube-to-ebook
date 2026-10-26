@@ -5,6 +5,7 @@ A beautiful web interface to manage your newsletter.
 
 import streamlit as st
 import os
+import sys
 import json
 import subprocess
 import re
@@ -583,10 +584,10 @@ if page == "Generate":
         if st.button("Generate & Send Newsletter", type="primary", use_container_width=True):
             with st.spinner("Crafting your newsletter..."):
                 try:
-                    # Note: If this fails with ModuleNotFoundError, replace "python3" with your full Python path
-                    # Find it by running: which python3
+                    # Use the same interpreter that runs this dashboard (the project venv),
+                    # so all installed packages are available
                     result = subprocess.run(
-                        ["python3", str(PROJECT_DIR / "main.py")],
+                        [sys.executable, str(PROJECT_DIR / "main.py")],
                         capture_output=True,
                         text=True,
                         cwd=str(PROJECT_DIR),
@@ -595,6 +596,8 @@ if page == "Generate":
 
                     if "Newsletter sent successfully" in result.stdout:
                         st.success("Newsletter sent! Check your inbox.")
+                    elif "saved locally" in result.stdout:
+                        st.success("Newsletter saved locally (email skipped). See the Archive page!")
                     elif "No new videos" in result.stdout:
                         st.info("No new videos to process. All caught up!")
                     else:
